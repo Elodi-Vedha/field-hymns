@@ -2,6 +2,7 @@ import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
 import io, wave as wv, sys, os
+from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(__file__))
 from engine import (
@@ -9,6 +10,7 @@ from engine import (
     N_OBJ, N_T, N_CYCLES, MAX_WIND, NOTES, BASE_FREQ,
     INTERVALS, EPS_AMP, VX_CMD, STEP_DUR
 )
+from animations import has_ffmpeg, render_all
 
 st.set_page_config(
     page_title="Field Hymns · Autonomous Inheritance",
@@ -54,6 +56,8 @@ st.divider()
 col_in, col_btn = st.columns([4, 1])
 with col_in:
     text = st.text_input("Text input", value="YOUR TEXT HERE.")
+    seed = st.number_input("Swarm seed", min_value=0, max_value=999999,
+                           value=1, step=1)
 with col_btn:
     st.markdown("<br>", unsafe_allow_html=True)
     run = st.button("▶  Run", use_container_width=True, type="primary")
@@ -69,9 +73,28 @@ if run and text:
     notes = text_to_notes(text)
 
     with st.spinner("Autonomous swarm negotiating…"):
-        auto_audio, auto_cycles = run_autonomous(notes)
+        auto_audio, auto_cycles = run_autonomous(notes, seed=int(seed))
     with st.spinner("Command system executing…"):
         cmd_audio, cmd_cycles = run_command(notes)
+    st.session_state["last_run"] = {
+        "text": text,
+        "seed": int(seed),
+        "notes": notes,
+        "auto_audio": auto_audio,
+        "auto_cycles": auto_cycles,
+        "cmd_audio": cmd_audio,
+        "cmd_cycles": cmd_cycles,
+    }
+    st.session_state.pop("last_animations", None)
+
+last_run = st.session_state.get("last_run")
+
+if last_run and last_run["text"] == text and last_run["seed"] == int(seed):
+    notes = last_run["notes"]
+    auto_audio = last_run["auto_audio"]
+    auto_cycles = last_run["auto_cycles"]
+    cmd_audio = last_run["cmd_audio"]
+    cmd_cycles = last_run["cmd_cycles"]
 
     # ── Chern numbers ──────────────────────────────────────────────────────
 
@@ -285,6 +308,58 @@ if run and text:
              for cd in cmd_cycles],
             use_container_width=True, hide_index=True
         )
+
+    # ── Animations ──────────────────────────────────────────────────────────
+
+    st.divider()
+    st.markdown("### Animations")
+    st.caption(
+        "Render MP4 visualizations of the Bloch-sphere wrapping, "
+        "audio-synced autonomous state, and PSO swarm negotiation prelude."
+    )
+    animation_key = (text, int(seed))
+    rendered = st.session_state.get("last_animations")
+    if not has_ffmpeg():
+        st.info("Install `ffmpeg` to render MP4 animations locally.")
+    else:
+        if st.button("Render animations", use_container_width=True):
+            with st.spinner("Rendering animations…"):
+                result = render_all(
+                    text=text,
+                    seed=int(seed),
+                    output_dir=Path("outputs/animations"),
+                )
+            st.session_state["last_animations"] = {
+                "key": animation_key,
+                "cycle": result.cycle,
+                "n": result.n,
+                "C": result.C,
+                "paths": [
+                    ("Bloch-sphere wrapping", result.bloch_path),
+                    ("Audio-synced autonomous state", result.audio_synced_path),
+                    ("Swarm negotiation prelude", result.swarm_path),
+                ],
+            }
+            rendered = st.session_state["last_animations"]
+
+        if rendered and rendered["key"] == animation_key:
+            st.success(
+                f"Rendered cycle {rendered['cycle']}: "
+                f"n={rendered['n']:+d}, C={rendered['C']:+d}"
+            )
+            for label, path in rendered["paths"]:
+                path = Path(path)
+                st.markdown(f"**{label}**")
+                st.video(str(path))
+                st.download_button(
+                    f"Download {label}",
+                    data=path.read_bytes(),
+                    file_name=path.name,
+                    mime="video/mp4",
+                    use_container_width=True,
+                )
+        elif rendered and rendered["key"] != animation_key:
+            st.info("Run or render animations again for the current text and seed.")
 
 else:
     st.info("Enter text and press ▶ Run.")
