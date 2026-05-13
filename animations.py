@@ -12,6 +12,7 @@ from typing import Dict, List, Optional
 import matplotlib
 
 matplotlib.use("Agg")
+import matplotlib.colors as mcolors
 import matplotlib.pyplot as plt
 from matplotlib.animation import FFMpegWriter
 from matplotlib.gridspec import GridSpec
@@ -37,6 +38,13 @@ DEFAULT_TEXT = "I am autonomous"
 DEFAULT_SEED = 1
 DEFAULT_OUTPUT_DIR = Path("outputs/animations")
 VIDEO_DPI = 120
+PAGE_BG = "#0a0a0f"
+AX_BG = "#0f0f18"
+TEXT = "#e8e8e8"
+MUTED = "#777777"
+SPINE = "#2a2a3a"
+GRID = "#333344"
+ZERO_LINE = "#555566"
 
 
 @dataclass
@@ -132,13 +140,43 @@ def _interval_from_occ(occ: float) -> float:
     return INTERVALS[idx]
 
 
+def _style_figure(fig) -> None:
+    fig.patch.set_facecolor(PAGE_BG)
+
+
+def _style_2d_axis(ax) -> None:
+    ax.set_facecolor(AX_BG)
+    ax.title.set_color(TEXT)
+    ax.xaxis.label.set_color(MUTED)
+    ax.yaxis.label.set_color(MUTED)
+    ax.tick_params(colors=MUTED, labelsize=7)
+    ax.grid(color=GRID, linewidth=0.35, alpha=0.35)
+    for spine in ax.spines.values():
+        spine.set_color(SPINE)
+
+
+def _style_3d_axis(ax) -> None:
+    ax.set_facecolor(AX_BG)
+    ax.title.set_color(TEXT)
+    ax.xaxis.label.set_color(MUTED)
+    ax.yaxis.label.set_color(MUTED)
+    ax.zaxis.label.set_color(MUTED)
+    ax.tick_params(colors=MUTED, labelsize=6, pad=0)
+    pane = mcolors.to_rgba(AX_BG, 0.55)
+    grid = mcolors.to_rgba(GRID, 0.35)
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.pane.set_facecolor(pane)
+        axis.pane.set_edgecolor(SPINE)
+        axis._axinfo["grid"]["color"] = grid
+
+
 def _draw_sphere(ax) -> None:
     u = np.linspace(0, 2 * np.pi, 28)
     v = np.linspace(0, np.pi, 14)
     xs = np.outer(np.cos(u), np.sin(v))
     ys = np.outer(np.sin(u), np.sin(v))
     zs = np.outer(np.ones_like(u), np.cos(v))
-    ax.plot_wireframe(xs, ys, zs, color="0.78", linewidth=0.35, alpha=0.33)
+    ax.plot_wireframe(xs, ys, zs, color="#7a7a8a", linewidth=0.35, alpha=0.33)
     ax.set_xlim(-1.05, 1.05)
     ax.set_ylim(-1.05, 1.05)
     ax.set_zlim(-1.05, 1.05)
@@ -146,7 +184,7 @@ def _draw_sphere(ax) -> None:
     ax.set_xlabel("dx/|d|", fontsize=7)
     ax.set_ylabel("dy/|d|", fontsize=7)
     ax.set_zlabel("dz/|d|", fontsize=7)
-    ax.tick_params(labelsize=6, pad=0)
+    _style_3d_axis(ax)
 
 
 def _draw_loop(ax, d_hat: np.ndarray, t_idx: int, title: str,
@@ -163,7 +201,7 @@ def _draw_loop(ax, d_hat: np.ndarray, t_idx: int, title: str,
     ax.scatter(loop[:, 0], loop[:, 1], loop[:, 2],
                c=np.linspace(0, 1, len(loop)), cmap="twilight",
                s=12, alpha=0.9)
-    ax.set_title(title, fontsize=10)
+    ax.set_title(title, fontsize=10, color=TEXT)
     ax.view_init(elev=24, azim=35 + 360 * t_idx / N_T)
 
 
@@ -182,7 +220,8 @@ def render_bloch_sphere_wrapping(
     cycle = cycles[cycle_index]
     d_hat = _dhat(cycle)
 
-    fig = plt.figure(figsize=(7, 7), facecolor="white")
+    fig = plt.figure(figsize=(12, 6.4), facecolor=PAGE_BG)
+    _style_figure(fig)
     writer = FFMpegWriter(
         fps=fps,
         bitrate=2400,
@@ -191,6 +230,7 @@ def render_bloch_sphere_wrapping(
     with writer.saving(fig, str(output_path), dpi=VIDEO_DPI):
         for t_idx in range(N_T):
             fig.clear()
+            _style_figure(fig)
             ax = fig.add_subplot(111, projection="3d")
             _draw_loop(
                 ax,
@@ -199,6 +239,7 @@ def render_bloch_sphere_wrapping(
                 "Autonomous Bloch-sphere wrapping\n"
                 f'text="{text}" · seed={seed} · cycle={cycle["cycle"]} · '
                 f'n={cycle["n"]:+d} · C={cycle["C"]:+d}',
+                color="#7ecfb0",
             )
             fig.text(
                 0.5,
@@ -207,6 +248,7 @@ def render_bloch_sphere_wrapping(
                 "k-loop on d(k,t)/|d|.",
                 ha="center",
                 fontsize=9,
+                color=MUTED,
             )
             writer.grab_frame()
     plt.close(fig)
@@ -234,6 +276,7 @@ def render_audio_synced_state(
 
     def draw_frame(fig, global_t: int) -> None:
         fig.clear()
+        _style_figure(fig)
         gs = GridSpec(
             3,
             2,
@@ -268,25 +311,26 @@ def render_audio_synced_state(
         x = np.arange(cycle_idx * N_T, cycle_idx * N_T + N_T)
         ax1 = fig.add_subplot(gs[0, 1])
         ax1.plot(x, occ_trace, color="#2ca25f", linewidth=1.6)
-        ax1.axhline(0.5, color="0.4", linestyle=":", linewidth=0.9)
-        ax1.axvline(global_t, color="#111", linewidth=1.3)
+        ax1.axhline(0.5, color=ZERO_LINE, linestyle=":", linewidth=0.9)
+        ax1.axvline(global_t, color=TEXT, linewidth=1.3)
         ax1.set_xlim(cycle_idx * N_T, cycle_idx * N_T + N_T - 1)
         ax1.set_ylim(-0.03, 1.03)
         ax1.set_title("occupation selects chord interval", fontsize=9)
         ax1.set_ylabel("occupation", fontsize=8)
-        ax1.tick_params(labelsize=7)
+        _style_2d_axis(ax1)
 
         ax2 = fig.add_subplot(gs[1, 1])
         ax2.plot(x, eps_trace, color="#5e81d1",
                  linewidth=1.4, label="epsilon")
         ax2.plot(x, cycle["vx_trace"], color="#d95f02",
                  linewidth=1.4, label="mean Vx")
-        ax2.axvline(global_t, color="#111", linewidth=1.3)
+        ax2.axvline(global_t, color=TEXT, linewidth=1.3)
         ax2.set_xlim(cycle_idx * N_T, cycle_idx * N_T + N_T - 1)
         ax2.set_ylim(-1.28, 1.28)
         ax2.set_title("drive and feedback", fontsize=9)
-        ax2.legend(fontsize=7, loc="upper right")
-        ax2.tick_params(labelsize=7)
+        _style_2d_axis(ax2)
+        ax2.legend(fontsize=7, loc="upper right", facecolor="#111118",
+                   edgecolor=SPINE, labelcolor=TEXT)
 
         ax3 = fig.add_subplot(gs[2, 1])
         sample_t = int(global_t * STEP_DUR * sr)
@@ -295,7 +339,7 @@ def render_audio_synced_state(
         stop = min(len(audio), sample_t + half)
         wx = np.linspace(start / sr, stop / sr, stop - start)
         ax3.plot(wx, audio[start:stop], color="#6a51a3", linewidth=0.8)
-        ax3.axvline(sample_t / sr, color="#111", linewidth=1.2)
+        ax3.axvline(sample_t / sr, color=TEXT, linewidth=1.2)
         ax3.set_xlim(
             max(0, sample_t / sr - 0.10),
             min(len(audio) / sr, sample_t / sr + 0.10),
@@ -303,12 +347,13 @@ def render_audio_synced_state(
         ax3.set_ylim(-0.24, 0.24)
         ax3.set_title("generated audio waveform", fontsize=9)
         ax3.set_xlabel("seconds", fontsize=8)
-        ax3.tick_params(labelsize=7)
+        _style_2d_axis(ax3)
 
         fig.suptitle(
             f'Audio-synced autonomous state · "{text}" · seed={seed}',
             fontsize=12,
             y=0.965,
+            color=TEXT,
         )
         meta = (
             f't={global_t:03d}/{N_T * N_CYCLES - 1:03d}   '
@@ -325,9 +370,11 @@ def render_audio_synced_state(
             fontsize=10.5,
             family="monospace",
             weight="bold",
+            color=TEXT,
         )
 
-    fig = plt.figure(figsize=(12, 7), facecolor="white")
+    fig = plt.figure(figsize=(12, 7), facecolor=PAGE_BG)
+    _style_figure(fig)
     writer = FFMpegWriter(
         fps=fps,
         bitrate=3200,
@@ -385,7 +432,8 @@ def render_swarm_negotiation_prelude(
     if not history:
         raise ValueError("pso_history is empty; run with record_fields=True.")
 
-    fig = plt.figure(figsize=(11, 6), facecolor="white")
+    fig = plt.figure(figsize=(11, 6), facecolor=PAGE_BG)
+    _style_figure(fig)
     writer = FFMpegWriter(
         fps=fps,
         bitrate=2600,
@@ -400,6 +448,7 @@ def render_swarm_negotiation_prelude(
     with writer.saving(fig, str(output_path), dpi=130):
         for snapshot in history:
             fig.clear()
+            _style_figure(fig)
             gs = GridSpec(
                 2,
                 2,
@@ -418,11 +467,12 @@ def render_swarm_negotiation_prelude(
             ax_mean = fig.add_subplot(gs[1, 1])
             positions = np.array(snapshot["positions"])
             fitness = np.array(snapshot["fitness"])
+            ax_ring.set_facecolor(AX_BG)
 
             for idx in range(N_OBJ):
                 nxt = (idx + 1) % N_OBJ
                 ax_ring.plot([xs[idx], xs[nxt]], [ys[idx], ys[nxt]],
-                             color="0.8", linewidth=1)
+                             color=SPINE, linewidth=1)
             sizes = 420 + 350 * np.clip(fitness, 0, 1)
             colors = [note_colors[note] for note in snapshot["notes"]]
             ax_ring.scatter(xs, ys, s=sizes, c=colors,
@@ -444,7 +494,7 @@ def render_swarm_negotiation_prelude(
                     scale * np.cos(theta[idx]),
                     scale * np.sin(theta[idx]),
                     head_width=0.035,
-                    color="black",
+                    color=TEXT,
                     alpha=0.75,
                     length_includes_head=True,
                 )
@@ -458,22 +508,24 @@ def render_swarm_negotiation_prelude(
                 "local message-passing ring\n"
                 "node size = personal-best fitness",
                 fontsize=10,
+                color=TEXT,
             )
 
             bar_colors = ["#7ecfb0" if vote >= 0 else "#e8a070"
                           for vote in positions]
             ax_bar.bar(np.arange(N_OBJ), positions, color=bar_colors)
-            ax_bar.axhline(0, color="0.35", linewidth=0.8)
+            ax_bar.axhline(0, color=ZERO_LINE, linewidth=0.8)
             consensus = round(snapshot["mean_vote"])
-            ax_bar.axhline(consensus, color="black", linestyle="--",
+            ax_bar.axhline(consensus, color=TEXT, linestyle="--",
                            linewidth=1.0, label="rounded consensus")
             ax_bar.set_xlim(-0.6, N_OBJ - 0.4)
             ax_bar.set_ylim(-(MAX_WIND + 0.8), MAX_WIND + 0.8)
             ax_bar.set_title("winding votes by object", fontsize=10)
             ax_bar.set_xlabel("object", fontsize=8)
             ax_bar.set_ylabel("vote", fontsize=8)
-            ax_bar.legend(fontsize=7, loc="upper right")
-            ax_bar.tick_params(labelsize=7)
+            _style_2d_axis(ax_bar)
+            ax_bar.legend(fontsize=7, loc="upper right", facecolor="#111118",
+                          edgecolor=SPINE, labelcolor=TEXT)
 
             means = [
                 item["mean_vote"]
@@ -481,9 +533,9 @@ def render_swarm_negotiation_prelude(
             ]
             ax_mean.plot(range(len(means)), means,
                          color="#5e81d1", linewidth=1.7)
-            ax_mean.axhline(0, color="0.5", linestyle=":",
+            ax_mean.axhline(0, color=ZERO_LINE, linestyle=":",
                             linewidth=0.8)
-            ax_mean.axhline(consensus, color="black", linestyle="--",
+            ax_mean.axhline(consensus, color=TEXT, linestyle="--",
                             linewidth=1.0)
             ax_mean.set_xlim(0, PSO_ROUNDS - 1)
             ax_mean.set_ylim(-(MAX_WIND + 0.8), MAX_WIND + 0.8)
@@ -491,13 +543,14 @@ def render_swarm_negotiation_prelude(
                               fontsize=10)
             ax_mean.set_xlabel("PSO round", fontsize=8)
             ax_mean.set_ylabel("mean vote", fontsize=8)
-            ax_mean.tick_params(labelsize=7)
+            _style_2d_axis(ax_mean)
 
             fig.suptitle(
                 f'Swarm negotiation prelude · "{text}" · '
                 f'cycle {cycle_index + 1}',
                 fontsize=12,
                 y=0.96,
+                color=TEXT,
             )
             fig.text(
                 0.5,
@@ -509,6 +562,7 @@ def render_swarm_negotiation_prelude(
                 family="monospace",
                 fontsize=10.5,
                 weight="bold",
+                color=TEXT,
             )
             fig.text(
                 0.5,
@@ -517,6 +571,7 @@ def render_swarm_negotiation_prelude(
                 "later controls Vy(k,t) and the topology/audio.",
                 ha="center",
                 fontsize=9,
+                color=MUTED,
             )
             writer.grab_frame()
     plt.close(fig)
