@@ -29,9 +29,10 @@ Autonomous occupation: self-consistent at each (k, t), responds to
     the full (V_x, V_y) coupling. Fixed point is found or lost.
 """
 
+import hashlib
 import numpy as np
 import wave
-from typing import List, Tuple, Optional
+from typing import Any, Dict, List, Tuple, Optional
 from dataclasses import dataclass
 
 
@@ -210,13 +211,15 @@ class AutonomousObject:
     Type changes via doesNotUnderstand.
     """
 
-    def __init__(self, note: str, idx: int, dna_seed: float):
+    def __init__(self, note: str, idx: int, dna_seed: float,
+                 rng: Optional[np.random.Generator] = None):
         self.idx  = idx
         self.note = note
         self.base = BASE_FREQ[note]
-        rng = np.random.default_rng(int(abs(dna_seed) * 1000 + idx) % (2**32))
-        self.pos    = float(rng.uniform(-(MAX_WIND + 0.5), MAX_WIND + 0.5))
-        self.vel    = float(rng.uniform(-0.2, 0.2))
+        init_rng = np.random.default_rng(int(abs(dna_seed) * 1000 + idx) % (2**32))
+        self.rng    = rng or np.random.default_rng()
+        self.pos    = float(init_rng.uniform(-(MAX_WIND + 0.5), MAX_WIND + 0.5))
+        self.vel    = float(init_rng.uniform(-0.2, 0.2))
         self.pb_pos = self.pos
         self.pb_fit = -np.inf
         self.last_emission: Optional[Emission] = None
@@ -246,7 +249,7 @@ class AutonomousObject:
         if received:
             best_nb = max(received, key=lambda m: m.fitness)
 
-        r1, r2    = np.random.random(), np.random.random()
+        r1, r2    = self.rng.random(), self.rng.random()
         cognitive = PSO_C1 * r1 * (self.pb_pos - self.pos)
         social    = PSO_C2 * r2 * (best_nb.pb_vote - self.pos) if best_nb else 0.0
         self.vel  = np.clip(PSO_W * self.vel + cognitive + social, -MAX_VEL, MAX_VEL)
@@ -279,8 +282,16 @@ class CommandObject:
 
 # ── System runners ────────────────────────────────────────────────────────────
 
-def run_autonomous(notes: List[str], sr: int = 44100):
-    dna_seed   = sum(hash(n) * (i + 1) for i, n in enumerate(notes)) % 100000
+def _stable_dna_seed(notes: List[str]) -> int:
+    digest = hashlib.sha256("|".join(notes).encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % 100000
+
+
+def run_autonomous(notes: List[str], sr: int = 44100,
+                   seed: Optional[int] = None,
+                   record_fields: bool = False):
+    rng        = np.random.default_rng(seed)
+    dna_seed   = _stable_dna_seed(notes)
     k_arr      = 2 * np.pi * np.arange(N_K) / N_K
     eps_list   = [EPS_AMP * np.sin(2 * np.pi * t / N_T) for t in range(N_T)]
     all_audio  = []
@@ -288,11 +299,22 @@ def run_autonomous(notes: List[str], sr: int = 44100):
 
     for cycle in range(N_CYCLES):
         objects = [AutonomousObject(notes[i % len(notes)], i,
-                                    dna_seed + cycle * 137)
+                                    dna_seed + cycle * 137, rng)
                    for i in range(N_OBJ)]
 
+        pso_history: List[Dict[str, Any]] = []
         for step in range(PSO_ROUNDS):
             emissions = [obj.negotiate(step) for obj in objects]
+            if record_fields:
+                pso_history.append({
+                    'step':       step,
+                    'positions':  [float(obj.pos) for obj in objects],
+                    'velocities': [float(obj.vel) for obj in objects],
+                    'fitness':    [float(obj.pb_fit) if np.isfinite(obj.pb_fit) else 0.0
+                                   for obj in objects],
+                    'notes':      [obj.note for obj in objects],
+                    'mean_vote':  float(np.mean([obj.pos for obj in objects])),
+                })
             for i, obj in enumerate(objects):
                 obj.receive(emissions[(i - 1) % N_OBJ])
                 obj.receive(emissions[(i + 1) % N_OBJ])
@@ -310,6 +332,10 @@ def run_autonomous(notes: List[str], sr: int = 44100):
         vx_trace  = []
         vy_trace  = []
         occ_trace = []
+        vx_grid   = []
+        vy_grid   = []
+        eps_grid  = []
+        occ_grid  = []
 
         # When n=0, use k-independent Vx to give clean C=0
         use_k_dep = (n_consensus != 0)
@@ -336,6 +362,11 @@ def run_autonomous(notes: List[str], sr: int = 44100):
             vx_trace.append(float(np.mean(step_vx)))
             vy_trace.append(float(np.mean(np.abs(step_vy))))
             occ_trace.append(float(np.mean(step_oc)))
+            if record_fields:
+                vx_grid.append(step_vx)
+                vy_grid.append(step_vy)
+                eps_grid.append([eps] * N_K)
+                occ_grid.append(step_oc)
 
         C = chern_FHS(psi_grid)
 
@@ -350,7 +381,7 @@ def run_autonomous(notes: List[str], sr: int = 44100):
         type_changes = [(o.idx, list(o.type_history))
                         for o in objects if len(o.type_history) > 1]
 
-        cycle_data.append({
+        cd = {
             'cycle':        cycle + 1,
             'n':            n_consensus,
             'C':            C,
@@ -362,7 +393,17 @@ def run_autonomous(notes: List[str], sr: int = 44100):
             'occ_trace':    occ_trace,
             'final_types':  final_types,
             'type_changes': type_changes,
-        })
+        }
+        if record_fields:
+            cd.update({
+                'pso_history': pso_history,
+                'vx_grid':     np.array(vx_grid),
+                'vy_grid':     np.array(vy_grid),
+                'eps_grid':    np.array(eps_grid),
+                'occ_grid':    np.array(occ_grid),
+                'k_arr':       k_arr.copy(),
+            })
+        cycle_data.append(cd)
 
     audio = np.concatenate(all_audio) if all_audio else np.array([])
     return audio, cycle_data

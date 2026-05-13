@@ -21,3 +21,47 @@ Field Hymns is a self-organising topological system where global invariants emer
    Blah blah blah, tl;dr: 
 
 We've got a 2-band Hamiltonian over (k, t), a self-consistent V_x feedback loop, a PSO-negotiated winding number n defining V_y, and a Chern number evaluation via FHS. 
+
+## Running
+
+Install the Python dependencies:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements.txt
+```
+
+Launch the Streamlit interface:
+
+```bash
+streamlit run app.py
+```
+
+## Rendering animations
+
+Field Hymns can render three MP4 visualizations of an autonomous run:
+
+- Bloch-sphere wrapping of the normalized `d(k,t)/|d|` loop.
+- Audio-synced autonomous state with occupation, feedback, waveform, and current note.
+- Swarm negotiation prelude showing the PSO winding votes before a cycle.
+
+Install `ffmpeg` first, for example on macOS:
+
+```bash
+brew install ffmpeg
+```
+
+Then render from the CLI:
+
+```bash
+python animations.py --text "I am autonomous" --seed 1 --output-dir outputs/animations
+```
+
+To search for a seed whose autonomous cycles include nonzero winding and nonzero Chern number:
+
+```bash
+python animations.py --text "I am autonomous" --seed 1 --require-nontrivial
+```
+
+The Streamlit app also includes a **Render animations** button after a run when `ffmpeg` is available.
